@@ -42,7 +42,13 @@ class LayerNorm(torch.nn.Module):
             torch.Tensor: The normalized tensor.
         """
         # todo
-        raise NotImplementedError
+        mean = x.mean(dim=-1, keepdim=True)
+        variance = x.var(dim=-1, keepdim=True, unbiased=False)
+        standard_deviation = torch.sqrt(variance + self.eps)
+
+        x_normalized = (x - mean) / standard_deviation  # normalize each token vector from embeddings
+
+        return x_normalized
 
     def forward(self, x):
         """
@@ -106,7 +112,20 @@ class Attention(nn.Module):
         jointly using matrix/tensor operations.
         '''
         # todo
-        raise NotImplementedError
+        #dot product, scale, softmax, output  
+        B, H, T, D = query.shape
+        raw_scores = torch.matmul(query, key.transpose(-2, -1))  # dot product 
+        scaled_scores = raw_scores / math.sqrt(D)
+
+        mask = self.causal_mask[:T, :T]  # block future data to 0
+        masked_scores = scaled_scores.masked_fill(mask == 0, float('-inf'))  # future positions from 0 to -infinity
+
+        attention_probabilities = F.softmax(masked_scores, dim=-1)  # softmax for attention probabilities
+        attention_probabilities_dropout = self.attn_dropout(attention_probabilities)   # drop out
+
+        output = torch.matmul(attention_probabilities_dropout, value)  # weighted sum
+
+        return output
 
 
     def forward(
@@ -211,7 +230,15 @@ class LlamaLayer(nn.Module):
            output of the feed-forward network
         '''
         # todo
-        raise NotImplementedError
+        x_normalized = self.attention_norm(x)  # normalizes the input
+        x_attention = self.attention(x_normalized)  # self-attention
+        x = x + x_attention  # residual connection, add attention output 
+        x_normalized = self.ffn_norm(x)  # normalize before ffn
+
+        x_feed_forward = self.feed_forward(x_normalized) # feed forward network
+        x = x + x_feed_forward # residual connection, add FFN output back
+
+        return x
 
 class Llama(LlamaPreTrainedModel):
     def __init__(self, config: LlamaConfig):
@@ -302,10 +329,18 @@ class Llama(LlamaPreTrainedModel):
                 7) Sample from this filtered probability distribution.
                 '''
                 # todo 
+                logits_scaled = logits / temperature  # scaled by temperature
+                logits_probabilities = F.softmax(logits_scaled, dim=-1)  # logits to softmax probabilities 
+                logits_probabilities_sorted, sorted_positions = torch.sort(logits_probabilities, dim=-1, descending=True) # sort probabilities with decreasing order
+                logits_probabilities_cumulative = torch.cumsum(logits_probabilities_sorted, dim=-1)  # add probabilities from left to right cumulativelly
+                logits_probabilities_masked = logits_probabilities_cumulative > top_p  # mask true for over top_p  
+                logits_probabilities_masked[:, 0] = False
+                logits_probabilities_filtered = logits_probabilities_sorted.masked_fill(logits_probabilities_masked, 0.0)   # mask out 
+                logits_probabilities_filtered = (logits_probabilities_filtered/ logits_probabilities_filtered.sum(dim=-1, keepdim=True))  # renormalize to 1
+                
+                sampled_indices = torch.multinomial(logits_probabilities_filtered, num_samples=1)  # sample from filtered distribution
+                idx_next = torch.gather(sorted_positions, dim=-1, index=sampled_indices)
 
-                raise NotImplementedError
-                # map to original vocab indices
-                idx_next = None
             
             # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
