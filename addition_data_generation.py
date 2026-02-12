@@ -2,6 +2,7 @@
 import random
 import os
 
+
 def generate_addition_data(n):
     """
     Generate a dataset of n unique 4-digit addition problems.
@@ -18,12 +19,29 @@ def generate_addition_data(n):
     # data = []
     # ....
     # return data
-    raise NotImplementedError
+    data = []  # store the final strings
+    seen_pairs = set()  # already used pairs
+
+    while len(data) < n:
+        a = random.randint(1000, 9999)  # two random 4 digit integers
+        b = random.randint(1000, 9999)
+        pair = tuple(sorted((a, b)))  # we need unique pairs
+        if pair in seen_pairs:
+            continue
+
+        seen_pairs.add(pair)
+        c = a + b  # calculate sum
+
+        example = f"{a}+{b}={c}"  # write like string
+        data.append(example)
+
+    return data
+
 
 def generate_dataset(n, filename, save_dir="data"):
     data = generate_addition_data(n)
-    os.makedirs('data', exist_ok=True)
+    os.makedirs("data", exist_ok=True)
     filepath = os.path.join(save_dir, filename)
-    with open(filepath, 'w') as f:
-        f.write('\n'.join(data))
+    with open(filepath, "w") as f:
+        f.write("\n".join(data))
     print(f"{n} data points saved to {filepath}")

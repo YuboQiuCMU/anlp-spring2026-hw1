@@ -1,4 +1,4 @@
-import os 
+import os
 import numpy as np
 import json
 import random
@@ -23,26 +23,28 @@ from tqdm import tqdm
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 
+
 def create_model(model_config):
     config = LlamaConfig(
-        vocab_size = model_config["vocab_size"],
-        dim = model_config["dim"],
-        dropout = model_config["dropout" ],
-        n_layers = model_config["n_layers"],
-        n_heads = model_config["n_heads"],
-        n_kv_heads = model_config["n_kv_heads"],
-        max_seq_len = model_config["max_seq_len"],
-        layer_norm_eps = model_config["layer_norm_eps"],
-        multiple_of = model_config["multiple_of"],
-        hidden_dim = model_config["hidden_dim"],
-        position_embedding_type = model_config["position_embedding_type"],
-        use_cache = model_config["use_cache"],
+        vocab_size=model_config["vocab_size"],
+        dim=model_config["dim"],
+        dropout=model_config["dropout"],
+        n_layers=model_config["n_layers"],
+        n_heads=model_config["n_heads"],
+        n_kv_heads=model_config["n_kv_heads"],
+        max_seq_len=model_config["max_seq_len"],
+        layer_norm_eps=model_config["layer_norm_eps"],
+        multiple_of=model_config["multiple_of"],
+        hidden_dim=model_config["hidden_dim"],
+        position_embedding_type=model_config["position_embedding_type"],
+        use_cache=model_config["use_cache"],
     )
     model = Llama(config)
-    return model 
+    return model
+
 
 ###########################################
-# ----- Model Training and Validation ----- 
+# ----- Model Training and Validation -----
 ###########################################
 def train_one_epoch(model, loader, optimizer, device):
     """
@@ -50,18 +52,18 @@ def train_one_epoch(model, loader, optimizer, device):
 
     The training loop should:
     1) Iterate over batches of tokenized input–target pairs
-    2) Perform a forward pass through the model to compute logits and hidden states. 
-        Hidden states are not important now. 
+    2) Perform a forward pass through the model to compute logits and hidden states.
+        Hidden states are not important now.
     3) Compute a cross-entropy loss between logits and target tokens
     4) Backpropagate the loss and update model parameters
 
     Hint:
-        The model does not need to learn to reproduce the question. Since 
-        the input already contains the question and the task is fixed 
-        (addition), training capacity is better spent learning to generate 
+        The model does not need to learn to reproduce the question. Since
+        the input already contains the question and the task is fixed
+        (addition), training capacity is better spent learning to generate
         the answer.
-    Another Hint: 
-        token id for "=" is 12. 
+    Another Hint:
+        token id for "=" is 12.
     """
     # # todo
     # model.train()
@@ -70,8 +72,40 @@ def train_one_epoch(model, loader, optimizer, device):
     # for ...
 
     # return total_loss / n_batches
+    model.train()  # train mode
+    total_loss = 0.0
+    batch_count = 0
 
-    raise NotImplementedError
+    for batch in tqdm(loader, desc="train", leave=False):  # loop batches
+        inputs, targets = batch
+        inputs = inputs.to(device)
+        targets = targets.to(device)  # x and y in gpu
+
+        logits, _ = model(inputs, targets=targets)  # forward
+        answer_mask = torch.zeros_like(targets, dtype=torch.bool)
+        answer_mask[:, 10:] = (
+            True  # answer starts at 10, False False False ... True True True
+        )
+
+        logits_flat = logits.reshape(-1, logits.size(-1))
+        targets_flat = targets.reshape(-1)
+        mask_flat = answer_mask.reshape(-1)  # into 2d
+
+        valid_mask = mask_flat & (targets_flat >= 0)  # remove padding (-1)
+
+        logits_selected = logits_flat[valid_mask]
+        targets_selected = targets_flat[valid_mask]  # tokens to compute the loss
+
+        loss = F.cross_entropy(logits_selected, targets_selected)
+
+        optimizer.zero_grad(set_to_none=True)  # clear gradients
+        loss.backward()  # backpropagate
+        optimizer.step()  # update
+
+        total_loss += loss.item()  # count and next
+        batch_count += 1
+
+    return total_loss / batch_count
 
 
 @torch.no_grad()
@@ -88,12 +122,12 @@ def evaluate_loss(model, loader, device):
     5) Accumulate loss over all batches and return the average
 
     Hint:
-        The model does not need to learn to reproduce the question. Since 
-        the input already contains the question and the task is fixed 
-        (addition), training capacity is better spent learning to generate 
+        The model does not need to learn to reproduce the question. Since
+        the input already contains the question and the task is fixed
+        (addition), training capacity is better spent learning to generate
         the answer.
-    Another Hint: 
-        token id for "=" is 12. 
+    Another Hint:
+        token id for "=" is 12.
     """
     # todo
     # model.eval()
@@ -102,25 +136,54 @@ def evaluate_loss(model, loader, device):
     # for ...
 
     # return total_loss / n_batches
+    model.eval()  # eval mode
+    total_loss = 0.0
+    batch_count = 0
 
-    raise NotImplementedError
+    for batch in loader:
+        inputs, targets = batch
+        inputs = inputs.to(device)
+        targets = targets.to(device)
 
+        logits, _ = model(inputs, targets=targets)  # forward
+
+        answer_mask = torch.zeros_like(
+            targets, dtype=torch.bool
+        )  # fixed answer region mask
+        answer_mask[:, 10:] = True  # only the asnwer part
+
+        logits_flat = logits.reshape(-1, logits.size(-1))
+        targets_flat = targets.reshape(-1)
+        mask_flat = answer_mask.reshape(-1)  # flatten it
+
+        valid_mask = mask_flat & (targets_flat >= 0)  # remove padding (-1)
+
+        logits_selected = logits_flat[valid_mask]
+        targets_selected = targets_flat[valid_mask]
+
+        loss = F.cross_entropy(logits_selected, targets_selected)  # loss
+
+        total_loss += loss.item()
+        batch_count += 1
+
+    return total_loss / batch_count
 
 
 # ----- Saving Checkpoints and Plots -----
 def create_model_filename(save_dir, epoch, dir="/checkpoints/"):
     filepath = os.path.join(save_dir, f"best_model.pth")
-    return filepath 
+    return filepath
+
 
 def save_model(model, optimizer, args, config, filepath):
     save_info = {
-        'model': model.state_dict(),
-        'optim': optimizer.state_dict(),
-        'args': args,
-        'model_config': config,
-        'system_rng': random.getstate(),
-        'numpy_rng': np.random.get_state(),
-        'torch_rng': torch.random.get_rng_state(),
+        "model": model.state_dict(),
+        "optim": optimizer.state_dict(),
+        "args": args,
+        "model_config": config,
+        "system_rng": random.getstate(),
+        "numpy_rng": np.random.get_state(),
+        "torch_rng": torch.random.get_rng_state(),
     }
     dir_name = os.path.dirname(filepath)
     os.makedirs(dir_name, exist_ok=True)
@@ -128,10 +191,11 @@ def save_model(model, optimizer, args, config, filepath):
     torch.save(save_info, filepath)
     print(f"Model saved to {filepath}")
 
+
 def save_loss_plot(history, save_dir):
 
-    save_path = os.path.join(save_dir , f"loss_curve.png")
-    if (save_dir):
+    save_path = os.path.join(save_dir, f"loss_curve.png")
+    if save_dir:
         os.makedirs(save_dir, exist_ok=True)
 
     plt.figure()
@@ -146,6 +210,7 @@ def save_loss_plot(history, save_dir):
 
     plt.close()
 
+
 def save_config(config, save_dir, filename):
     filepath = os.path.join(save_dir, f"{filename}.json")
     if save_dir:
@@ -155,6 +220,7 @@ def save_config(config, save_dir, filename):
         json.dump(config, f, indent=4)
 
     print(f"Config saved to {filepath}")
+
 
 def model_training(args):
     model_config = {
@@ -173,14 +239,16 @@ def model_training(args):
     }
 
     training_config = {
-        "capacity" : args.capacity, 
-        "n_epochs" : args.epochs,
-        "batch_size" : args.batch_size,
-        "save_dir" : args.save_dir
+        "capacity": args.capacity,
+        "n_epochs": args.epochs,
+        "batch_size": args.batch_size,
+        "save_dir": args.save_dir,
     }
 
-    # Create model 
-    device = torch.device("cuda" if args.use_gpu and torch.cuda.is_available() else "cpu")
+    # Create model
+    device = torch.device(
+        "cuda" if args.use_gpu and torch.cuda.is_available() else "cpu"
+    )
 
     model = create_model(model_config)
     model = model.to(device)
@@ -189,7 +257,9 @@ def model_training(args):
     print(f"model parameters are {total_params}")
 
     # Generate datasets and loaders
-    n_training_samples = math.ceil(training_config["capacity"] / (6 * total_params * training_config["n_epochs"]))
+    n_training_samples = math.ceil(
+        training_config["capacity"] / (6 * total_params * training_config["n_epochs"])
+    )
     n_validation_samples = math.ceil(n_training_samples * 0.2)
     training_config["model_parameters"] = total_params
     training_config["train_samples"] = n_training_samples
@@ -200,28 +270,35 @@ def model_training(args):
     train_dataset = addition_lib.create_datasets(args.train_file)
     val_dataset = addition_lib.create_datasets(args.val_file)
 
-    train_loader = DataLoader(train_dataset, batch_size=training_config["batch_size"], shuffle=True, num_workers=4)
-    val_loader   = DataLoader(val_dataset, batch_size=training_config["batch_size"], shuffle=False, num_workers=4)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=training_config["batch_size"],
+        shuffle=True,
+        num_workers=4,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=training_config["batch_size"],
+        shuffle=False,
+        num_workers=4,
+    )
 
     optimizer = AdamW(model.parameters(), lr=1e-3)
 
     # Start model training
-    history = {
-        "train_loss": [],
-        "val_loss": []
-    }
+    history = {"train_loss": [], "val_loss": []}
 
     os.makedirs(training_config["save_dir"], exist_ok=True)
 
-    best_val_loss = float('inf')
+    best_val_loss = float("inf")
 
     for epoch in range(1, training_config["n_epochs"] + 1):
         # Train the model for one epoch
         train_loss = train_one_epoch(model, train_loader, optimizer, device)
-        
+
         # Evaluate on the validation set
         val_loss = evaluate_loss(model, val_loader, device)
-        
+
         # Append the losses to history
         history["train_loss"].append(train_loss)
         history["val_loss"].append(val_loss)
@@ -236,16 +313,18 @@ def model_training(args):
         save_loss_plot(history, training_config["save_dir"])
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            model_filepath = create_model_filename(training_config["save_dir"], epoch, dir="checkpoints")
+            model_filepath = create_model_filename(
+                training_config["save_dir"], epoch, dir="checkpoints"
+            )
             save_model(model, optimizer, model_config, training_config, model_filepath)
-    
+
     save_loss_plot(history, training_config["save_dir"])
     save_config(training_config, training_config["save_dir"], "training_config")
     save_config(model_config, training_config["save_dir"], "model_config")
 
 
 ###########################################
-# ------------- Model Testing ------------- 
+# ------------- Model Testing -------------
 ###########################################
 def trim_padding(tokens, pad_id=0):
     """
@@ -258,15 +337,16 @@ def trim_padding(tokens, pad_id=0):
         if tokens[j] != pad_id:
             start = j
             break
-    for j in range(len(tokens)-1, start-1, -1):
+    for j in range(len(tokens) - 1, start - 1, -1):
         if tokens[j] != pad_id:
-            end = j+1
+            end = j + 1
             break
     return tokens[start:end]
 
+
 def split_before(lst, value):
     if value in lst[1:]:
-        return lst[:lst.index(value)]
+        return lst[: lst.index(value)]
     return lst
 
 
@@ -280,7 +360,7 @@ def check(dataset_decode, generated_tokens):
     # print(f"out text is {out_text}")
 
     try:
-        m = re.match(r'(\d+)\+(\d+)=(\d+)', out_text)
+        m = re.match(r"(\d+)\+(\d+)=(\d+)", out_text)
         a = int(m.group(1))
         b = int(m.group(2))
         c = int(m.group(3))
@@ -291,7 +371,15 @@ def check(dataset_decode, generated_tokens):
     return a, b, c, correct, out_text
 
 
-def generate(model, prompt_tokens, max_new_tokens=10, eos_id=None, device='cpu', do_sample=False, top_k=None):
+def generate(
+    model,
+    prompt_tokens,
+    max_new_tokens=10,
+    eos_id=None,
+    device="cpu",
+    do_sample=False,
+    top_k=None,
+):
     """
     Autoregressive generation: given a prompt, generate tokens one at a time.
     """
@@ -329,20 +417,21 @@ def load_config(save_dir, filename):
     with open(filepath, "r") as f:
         return json.load(f)
 
+
 def load_model(save_dir, filename, model, device):
     filepath = os.path.join(save_dir, filename)
     checkpoint = torch.load(filepath, map_location=device)
 
     state_dict = checkpoint["model"]
 
-    unwanted_prefix = '_orig_mod.'
-    for k,v in list(state_dict.items()):
-       if k.startswith(unwanted_prefix):
-        state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-    
+    unwanted_prefix = "_orig_mod."
+    for k, v in list(state_dict.items()):
+        if k.startswith(unwanted_prefix):
+            state_dict[k[len(unwanted_prefix) :]] = state_dict.pop(k)
+
     model.load_state_dict(state_dict, strict=False)
     model.to(device)
-    
+
     random.setstate(checkpoint["system_rng"])
     np.random.set_state(checkpoint["numpy_rng"])
     torch.random.set_rng_state(checkpoint["torch_rng"].cpu())
@@ -350,7 +439,10 @@ def load_model(save_dir, filename, model, device):
     print(f"Loaded model from {filepath}.")
     return model
 
-def save_experiment_info(model, model_config, train_config, accuracy, results, save_dir):
+
+def save_experiment_info(
+    model, model_config, train_config, accuracy, results, save_dir
+):
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
     filepath = os.path.join(save_dir, f"experiment_summary.json")
@@ -364,13 +456,14 @@ def save_experiment_info(model, model_config, train_config, accuracy, results, s
         "train_config": train_config,
         "num_params": num_params,
         # "predictions": predictions,
-        "accuracy": accuracy
+        "accuracy": accuracy,
     }
 
     with open(filepath, "w") as f:
         json.dump(info, f, indent=4)
 
     print(f"Experiment info saved to {filepath}")
+
 
 def save_predictions(results, save_dir):
     filepath = os.path.join(save_dir, f"predictions.json")
@@ -399,11 +492,7 @@ def test_model(
 
     # If no dataloader provided, create one
     if test_dataloader is None:
-        test_dataloader = DataLoader(
-            test_dataset,
-            batch_size=32,
-            shuffle=False
-        )
+        test_dataloader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
     with torch.no_grad():
         for batch in tqdm(test_dataloader):
@@ -424,9 +513,7 @@ def test_model(
                 prompt_texts.append(prompt_text)
 
             batch_prompt_tokens = torch.nn.utils.rnn.pad_sequence(
-                batch_prompt_tokens,
-                batch_first=True,
-                padding_value=0
+                batch_prompt_tokens, batch_first=True, padding_value=0
             ).to(device)
 
             generated = generate(
@@ -434,23 +521,18 @@ def test_model(
                 batch_prompt_tokens,
                 max_new_tokens=max_gen_len,
                 eos_id=eos_id,
-                device=device
+                device=device,
             )
 
             for i in range(generated.size(0)):
                 a, b, c, correct_, out_text = check(
-                    dataset_decode,
-                    generated[i:i+1]
+                    dataset_decode, generated[i : i + 1]
                 )
 
-                results.append(
-                    (prompt_texts[i], generated[i], out_text, a, b, c)
-                )
+                results.append((prompt_texts[i], generated[i], out_text, a, b, c))
 
                 if not correct_:
-                    incorrect.append(
-                        (prompt_texts[i], generated[i], a, b, c)
-                    )
+                    incorrect.append((prompt_texts[i], generated[i], a, b, c))
 
                 correct += int(correct_)
                 total += 1
@@ -458,34 +540,45 @@ def test_model(
     accuracy = correct / total if total > 0 else 0.0
     return accuracy, incorrect, results
 
+
 def model_testing(args):
-    training_config = load_config(os.path.dirname(args.checkpoint), "training_config.json")
+    training_config = load_config(
+        os.path.dirname(args.checkpoint), "training_config.json"
+    )
     model_config = load_config(os.path.dirname(args.checkpoint), "model_config.json")
 
     test_dataset = addition_lib.create_datasets(args.test_file)
-    test_loader  = DataLoader(test_dataset, batch_size=training_config["batch_size"], shuffle=False)
+    test_loader = DataLoader(
+        test_dataset, batch_size=training_config["batch_size"], shuffle=False
+    )
     print(f"test length {len(test_dataset)}")
 
     model = create_model(model_config)
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     model = load_model(
-        save_dir=os.path.dirname(args.checkpoint), 
-        filename=os.path.basename(args.checkpoint), 
-        model=model, 
-        device=device
+        save_dir=os.path.dirname(args.checkpoint),
+        filename=os.path.basename(args.checkpoint),
+        model=model,
+        device=device,
     )
     model = model.to(device)
 
+    accuracy, incorrect, results = test_model(
+        model, test_dataset, test_dataset.decode, max_gen_len=10, device=device
+    )
 
-
-    accuracy, incorrect, results = test_model(model, test_dataset, test_dataset.decode, max_gen_len=10, device=device)
-
-    print('Accuracy:', accuracy)
+    print("Accuracy:", accuracy)
     print(f"test length {len(test_dataset)}")
 
-    save_experiment_info(model, model_config, training_config, accuracy, results, os.path.dirname(args.checkpoint))
+    save_experiment_info(
+        model,
+        model_config,
+        training_config,
+        accuracy,
+        results,
+        os.path.dirname(args.checkpoint),
+    )
     save_predictions(results, os.path.dirname(args.checkpoint))
-
 
 
 def get_args():
@@ -500,8 +593,12 @@ def get_args():
     train_parser.add_argument("--epochs", type=int, default=10)
     train_parser.add_argument("--batch_size", type=int, default=1024)
     train_parser.add_argument("--lr", type=float, default=1e-3)
-    train_parser.add_argument("--save_dir", type=str, default="addition_models/best_model/")
-    train_parser.add_argument("--train_file", type=str, default="data/addition_train.txt")
+    train_parser.add_argument(
+        "--save_dir", type=str, default="addition_models/best_model/"
+    )
+    train_parser.add_argument(
+        "--train_file", type=str, default="data/addition_train.txt"
+    )
     train_parser.add_argument("--val_file", type=str, default="data/addition_dev.txt")
 
     train_parser.add_argument("--dim", type=int, default=16)
@@ -509,7 +606,6 @@ def get_args():
     train_parser.add_argument("--n_heads", type=int, default=4)
     train_parser.add_argument("--n_kv_heads", type=int, default=4)
     train_parser.add_argument("--capacity", type=int, default=5808844800000)
-
 
     # -------- Test --------
     test_parser = subparsers.add_parser("test", help="Evaluate a trained model")

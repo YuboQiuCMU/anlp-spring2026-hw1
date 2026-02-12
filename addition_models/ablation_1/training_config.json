@@ -1,0 +1,8 @@
+{
+    "capacity": 5808844800000,
+    "n_epochs": 40,
+    "batch_size": 1024,
+    "save_dir": "addition_models/64_10_88_40e_best/",
+    "model_parameters": 536000,
+    "train_samples": 45156
+}

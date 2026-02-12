@@ -1,6 +1,7 @@
 from typing import Tuple
 import torch
 
+
 def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
     """
     Helper function to reshape frequency tensor to have the same shape as the target tensor 'x'
@@ -22,6 +23,7 @@ def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
     assert freqs_cis.shape == (x.shape[1], x.shape[-1])
     shape = [d if i == 1 or i == ndim - 1 else 1 for i, d in enumerate(x.shape)]
     return freqs_cis.view(shape)
+
 
 def apply_rotary_emb(
     query: torch.Tensor,
@@ -56,7 +58,9 @@ def apply_rotary_emb(
     # and Section 3 in https://arxiv.org/abs/2104.09864.
 
     # reshape xq and xk to match the complex representation
-    query_real, query_imag = query.float().reshape(query.shape[:-1] + (-1, 2)).unbind(-1)
+    query_real, query_imag = (
+        query.float().reshape(query.shape[:-1] + (-1, 2)).unbind(-1)
+    )
     key_real, key_imag = key.float().reshape(key.shape[:-1] + (-1, 2)).unbind(-1)
     # This separates each query/key vector into its odd and even indices (assuming *one-indexing*).
     # query_real contains q_1, q_3, q_5, ... and query_imag contains q_2, q_4, q_6, ...
@@ -67,9 +71,34 @@ def apply_rotary_emb(
     # Then, combine these trigonometric values with the tensors query_real, query_imag,
     # key_real, and key_imag.
 
-    raise NotImplementedError
+    rotation_dimensions = (
+        head_dim // 2
+    )  # each plane needs 2 dimensions, each plane gets one rotation angle
+    positions = torch.arange(seqlen, device=device)
+    frequencies = 1.0 / (
+        theta
+        ** (torch.arange(0, rotation_dimensions, device=device) / rotation_dimensions)
+    )  # frequencies for each pair of dimensions
+    angles = torch.outer(positions, frequencies)
 
-    query_out = None
-    key_out = None
-    # Return the rotary position embeddings for the query and key tensors
-    return query_out, key_out
+    cos = torch.cos(angles)
+    sin = torch.sin(angles)
+
+    cos = reshape_for_broadcast(
+        cos, query_real
+    )  # reshape, making cos and sin compatible
+    sin = reshape_for_broadcast(sin, query_real)
+
+    query_rotated_real = (
+        query_real * cos - query_imag * sin
+    )  # rotate each 2D pair for queries
+    query_rotated_image = query_real * sin + query_imag * cos
+    key_rotated_real = key_real * cos - key_imag * sin  # rotate each 2D pair for keys
+    key_rotated_image = key_real * sin + key_imag * cos
+    query_rotated = torch.stack(
+        (query_rotated_real, query_rotated_image), dim=-1
+    ).flatten(
+        -2
+    )  # combine the two dimentions
+    key_rotated = torch.stack((key_rotated_real, key_rotated_image), dim=-1).flatten(-2)
+    return query_rotated, key_rotated

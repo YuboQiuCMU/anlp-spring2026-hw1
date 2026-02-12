@@ -32,7 +32,7 @@ class LayerNorm(torch.nn.Module):
 
     def _norm(self, x):
         """
-        Compute layer normalization by subtracting the mean and dividing by 
+        Compute layer normalization by subtracting the mean and dividing by
         the standard deviation along the last dimension.
 
         Args:
@@ -46,7 +46,9 @@ class LayerNorm(torch.nn.Module):
         variance = x.var(dim=-1, keepdim=True, unbiased=False)
         standard_deviation = torch.sqrt(variance + self.eps)
 
-        x_normalized = (x - mean) / standard_deviation  # normalize each token vector from embeddings
+        x_normalized = (
+            x - mean
+        ) / standard_deviation  # normalize each token vector from embeddings
 
         return x_normalized
 
@@ -64,12 +66,15 @@ class LayerNorm(torch.nn.Module):
         output = self._norm(x.float()).type_as(x)
         return output * self.weight + self.bias
 
+
 class Attention(nn.Module):
     def __init__(self, config: LlamaConfig, causal: bool = True):
         super().__init__()
-        self.causal = causal 
+        self.causal = causal
 
-        self.n_kv_heads = config.n_heads if config.n_kv_heads is None else config.n_kv_heads
+        self.n_kv_heads = (
+            config.n_heads if config.n_kv_heads is None else config.n_kv_heads
+        )
         assert config.n_heads % self.n_kv_heads == 0
         model_parallel_size = 1
         self.n_local_heads = config.n_heads // model_parallel_size
@@ -77,10 +82,18 @@ class Attention(nn.Module):
         self.n_rep = self.n_local_heads // self.n_local_kv_heads
         self.head_dim = config.dim // config.n_heads
         self.max_seq_len = config.max_seq_len
-        self.compute_query = nn.Linear(config.dim, config.n_heads * self.head_dim, bias=False)
-        self.compute_key = nn.Linear(config.dim, self.n_kv_heads * self.head_dim, bias=False)
-        self.compute_value = nn.Linear(config.dim, self.n_kv_heads * self.head_dim, bias=False)
-        self.compute_output = nn.Linear(config.n_heads * self.head_dim, config.dim, bias=False)
+        self.compute_query = nn.Linear(
+            config.dim, config.n_heads * self.head_dim, bias=False
+        )
+        self.compute_key = nn.Linear(
+            config.dim, self.n_kv_heads * self.head_dim, bias=False
+        )
+        self.compute_value = nn.Linear(
+            config.dim, self.n_kv_heads * self.head_dim, bias=False
+        )
+        self.compute_output = nn.Linear(
+            config.n_heads * self.head_dim, config.dim, bias=False
+        )
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
         self.dropout = config.dropout
@@ -89,15 +102,13 @@ class Attention(nn.Module):
         if causal:
             self.register_buffer(
                 "causal_mask",
-                torch.tril(torch.ones(config.max_seq_len, config.max_seq_len))
+                torch.tril(torch.ones(config.max_seq_len, config.max_seq_len)),
             )
 
-
-    def compute_query_key_value_scores(self,
-                                       query: torch.Tensor,
-                                       key: torch.Tensor,
-                                       value: torch.Tensor) -> torch.Tensor:
-        '''
+    def compute_query_key_value_scores(
+        self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor
+    ) -> torch.Tensor:
+        """
         Jointly compute Scaled Dot Product Attention (see Section 3.2.1 in
         https://arxiv.org/abs/1706.03762 for details). The query, key, and
         value tensors each have shape (bs, n_local_heads, seqlen, head_dim).
@@ -110,29 +121,31 @@ class Attention(nn.Module):
 
         An optimal implementation will compute attention for all heads
         jointly using matrix/tensor operations.
-        '''
+        """
         # todo
-        #dot product, scale, softmax, output  
+        # dot product, scale, softmax, output
         B, H, T, D = query.shape
-        raw_scores = torch.matmul(query, key.transpose(-2, -1))  # dot product 
+        raw_scores = torch.matmul(query, key.transpose(-2, -1))  # dot product
         scaled_scores = raw_scores / math.sqrt(D)
 
         mask = self.causal_mask[:T, :T]  # block future data to 0
-        masked_scores = scaled_scores.masked_fill(mask == 0, float('-inf'))  # future positions from 0 to -infinity
+        masked_scores = scaled_scores.masked_fill(
+            mask == 0, float("-inf")
+        )  # future positions from 0 to -infinity
 
-        attention_probabilities = F.softmax(masked_scores, dim=-1)  # softmax for attention probabilities
-        attention_probabilities_dropout = self.attn_dropout(attention_probabilities)   # drop out
+        attention_probabilities = F.softmax(
+            masked_scores, dim=-1
+        )  # softmax for attention probabilities
+        attention_probabilities_dropout = self.attn_dropout(
+            attention_probabilities
+        )  # drop out
 
         output = torch.matmul(attention_probabilities_dropout, value)  # weighted sum
 
         return output
 
-
-    def forward(
-        self,
-        x: torch.Tensor
-    ):
-        '''
+    def forward(self, x: torch.Tensor):
+        """
         Llama2 uses Grouped-Query Attention. The details of GQA are actually
         not critical to solving this assignment; you are simply asked to
         compute Scaled Dot Product Attention (see above for details). GQA is
@@ -140,7 +153,7 @@ class Attention(nn.Module):
         Section 2.2 in https://arxiv.org/abs/2305.13245 or
         https://ai.plainenglish.io/understanding-llama2-kv-cache-grouped-query-attention-rotary-embedding-and-more-c17e5f49a6d7
         for details.
-        '''
+        """
         batch_size, seqlen, _ = x.shape
 
         query = self.compute_query(x)
@@ -173,7 +186,6 @@ class Attention(nn.Module):
         return output
 
 
-
 class FeedForward(nn.Module):
     def __init__(self, dim: int, hidden_dim: int, multiple_of: int, dropout: float):
         super().__init__()
@@ -187,10 +199,10 @@ class FeedForward(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def SwiGLU(self, x: torch.Tensor) -> torch.Tensor:
-        '''
+        """
         Compute the SwiGLU activation function (see Section 2 in
         https://arxiv.org/abs/2204.02311
-        '''
+        """
         return F.silu(self.w1(x)) * self.w3(x)
 
     def forward(self, x):
@@ -215,7 +227,7 @@ class LlamaLayer(nn.Module):
         self.ffn_norm = LayerNorm(config.dim, eps=config.layer_norm_eps)
 
     def forward(self, x):
-        '''
+        """
         This is the forward pass of the basic transformer building block. This is a
         modernized version of the block shown on the left of Figure 1 on
         https://arxiv.org/pdf/1706.03762.pdf.
@@ -228,24 +240,25 @@ class LlamaLayer(nn.Module):
         4) a feed-forward network on the layer-normalized output of the self-attention
         5) add a residual connection from the unnormalized self-attention output to the
            output of the feed-forward network
-        '''
+        """
         # todo
         x_normalized = self.attention_norm(x)  # normalizes the input
         x_attention = self.attention(x_normalized)  # self-attention
-        x = x + x_attention  # residual connection, add attention output 
+        x = x + x_attention  # residual connection, add attention output
         x_normalized = self.ffn_norm(x)  # normalize before ffn
 
-        x_feed_forward = self.feed_forward(x_normalized) # feed forward network
-        x = x + x_feed_forward # residual connection, add FFN output back
+        x_feed_forward = self.feed_forward(x_normalized)  # feed forward network
+        x = x + x_feed_forward  # residual connection, add FFN output back
 
         return x
 
+
 class Llama(LlamaPreTrainedModel):
     def __init__(self, config: LlamaConfig):
-        '''
+        """
         You will probably never need to call this function, unless you decide
         to pretrain a Llama model from scratch.
-        '''
+        """
         super().__init__(config)
         self.params = config
         self.vocab_size = config.vocab_size
@@ -260,7 +273,9 @@ class Llama(LlamaPreTrainedModel):
         self.output = nn.Linear(config.dim, config.vocab_size, bias=False)
 
         # share the unembedding parameters with the embedding parameters
-        self.tok_embeddings.weight = self.output.weight # https://paperswithcode.com/method/weight-tying
+        self.tok_embeddings.weight = (
+            self.output.weight
+        )  # https://paperswithcode.com/method/weight-tying
 
         # some useful precompute for the RoPE relative positional embeddings
 
@@ -268,8 +283,10 @@ class Llama(LlamaPreTrainedModel):
         self.apply(self._init_weights)
         # apply special scaled init to the residual projections, per GPT-2 paper
         for pn, p in self.named_parameters():
-            if pn.endswith('w3.weight') or pn.endswith('compute_output.weight'):
-                torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layers))
+            if pn.endswith("w3.weight") or pn.endswith("compute_output.weight"):
+                torch.nn.init.normal_(
+                    p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layers)
+                )
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -279,7 +296,9 @@ class Llama(LlamaPreTrainedModel):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, tokens: torch.Tensor, targets: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self, tokens: torch.Tensor, targets: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         _batch_size, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
         h = self.dropout(h)
@@ -293,7 +312,9 @@ class Llama(LlamaPreTrainedModel):
             logits = self.output(h)
         else:
             # inference-time mini-optimization: only forward the output on the very last position
-            logits = self.output(h[:, [-1], :]) # note: using list [-1] to preserve the time dim
+            logits = self.output(
+                h[:, [-1], :]
+            )  # note: using list [-1] to preserve the time dim
 
         return logits, h
 
@@ -302,23 +323,27 @@ class Llama(LlamaPreTrainedModel):
         """
         Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
         the sequence max_new_tokens times, feeding the predictions back into the model each time.
-        We perform this generation using epsilon sampling (removing tokens below probability 
-        threshold epsilon). Most likely you'll want to make sure to be in model.eval() mode 
-        of operation for this. Also note this is a super inefficient version of sampling 
+        We perform this generation using epsilon sampling (removing tokens below probability
+        threshold epsilon). Most likely you'll want to make sure to be in model.eval() mode
+        of operation for this. Also note this is a super inefficient version of sampling
         with no key/value cache, but you are free to add any optimizations on top of this.
         """
         for _ in range(max_new_tokens):
             # if the sequence context is growing too long we must crop it at block_size
-            idx_cond = idx if idx.size(1) <= self.params.max_seq_len else idx[:, -self.params.max_seq_len:]
+            idx_cond = (
+                idx
+                if idx.size(1) <= self.params.max_seq_len
+                else idx[:, -self.params.max_seq_len :]
+            )
             # forward the model to get the logits for the index in the sequence
             logits, _ = self(idx_cond)
-            logits = logits[:, -1, :] # crop to just the final time step
-            
+            logits = logits[:, -1, :]  # crop to just the final time step
+
             if temperature == 0.0:
                 # select the single most likely index
                 idx_next = torch.argmax(logits, dim=-1, keepdim=True)
             else:
-                '''
+                """
                 Perform temperature sampling with top-p sampling:
                 1) Scale the logits with the temperature followed by normalization using Softmax.
                 2) Sort tokens by descending probability.
@@ -327,45 +352,67 @@ class Llama(LlamaPreTrainedModel):
                 5) Mask out all tokens outside this nucleus.
                 6) Renormalize the remaining probabilities so they sum to 1.
                 7) Sample from this filtered probability distribution.
-                '''
-                # todo 
-                logits_scaled = logits / temperature  # scaled by temperature
-                logits_probabilities = F.softmax(logits_scaled, dim=-1)  # logits to softmax probabilities 
-                logits_probabilities_sorted, sorted_positions = torch.sort(logits_probabilities, dim=-1, descending=True) # sort probabilities with decreasing order
-                logits_probabilities_cumulative = torch.cumsum(logits_probabilities_sorted, dim=-1)  # add probabilities from left to right cumulativelly
-                logits_probabilities_masked = logits_probabilities_cumulative > top_p  # mask true for over top_p  
-                logits_probabilities_masked[:, 0] = False
-                logits_probabilities_filtered = logits_probabilities_sorted.masked_fill(logits_probabilities_masked, 0.0)   # mask out 
-                logits_probabilities_filtered = (logits_probabilities_filtered/ logits_probabilities_filtered.sum(dim=-1, keepdim=True))  # renormalize to 1
-                
-                sampled_indices = torch.multinomial(logits_probabilities_filtered, num_samples=1)  # sample from filtered distribution
-                idx_next = torch.gather(sorted_positions, dim=-1, index=sampled_indices)
+                """
+                # todo
+                logits_scaled = logits / temperature
+                probs = F.softmax(logits_scaled, dim=-1)
+                # sort by decreasing probability
+                probs_sorted, sorted_indices = torch.sort(
+                    probs, dim=-1, descending=True
+                )
+                # cumulative probability
+                probs_cumsum = torch.cumsum(probs_sorted, dim=-1)
+                # nucleus mask (keep smallest set with cumulative >= top_p)
+                mask = probs_cumsum > top_p
+                # shift mask right to keep the first token where cumsum >= top_p
+                mask[:, 1:] = mask[:, :-1].clone()
+                mask[:, 0] = False
+                probs_filtered = probs_sorted.masked_fill(mask, 0.0)
+                # renormalize
+                probs_filtered = probs_filtered / (
+                    probs_filtered.sum(dim=-1, keepdim=True) + 1e-10
+                )  # + 1e-10
+                # sample
+                sampled_indices = torch.multinomial(probs_filtered, num_samples=1)
+                idx_next = torch.gather(sorted_indices, dim=-1, index=sampled_indices)
 
-            
             # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
 
         return idx
 
+
 def load_pretrained(checkpoint):
-  device = 'cuda' if torch.cuda.is_available() else 'cpu' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
-  #dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32' or 'bfloat16' or 'float16'
-  dtype = "float32"
+    device = (
+        "cuda" if torch.cuda.is_available() else "cpu"
+    )  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
+    # dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32' or 'bfloat16' or 'float16'
+    dtype = "float32"
 
-  torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
-  torch.backends.cudnn.allow_tf32 = True # allow tf32 on cudnn
-  device_type = 'cuda' if 'cuda' in device else 'cpu' # for later use in torch.autocast
-  ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
-  ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
+    torch.backends.cuda.matmul.allow_tf32 = True  # allow tf32 on matmul
+    torch.backends.cudnn.allow_tf32 = True  # allow tf32 on cudnn
+    device_type = (
+        "cuda" if "cuda" in device else "cpu"
+    )  # for later use in torch.autocast
+    ptdtype = {
+        "float32": torch.float32,
+        "bfloat16": torch.bfloat16,
+        "float16": torch.float16,
+    }[dtype]
+    ctx = (
+        nullcontext()
+        if device_type == "cpu"
+        else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
+    )
 
-  # init from a model saved in a specific directory
-  checkpoint_dict = torch.load(checkpoint, map_location=device)
-  config = LlamaConfig(**checkpoint_dict['model_args'])
-  model = Llama(config)
-  state_dict = checkpoint_dict['model']
-  unwanted_prefix = '_orig_mod.'
-  for k,v in list(state_dict.items()):
-      if k.startswith(unwanted_prefix):
-          state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-  model.load_state_dict(state_dict, strict=False)
-  return model
+    # init from a model saved in a specific directory
+    checkpoint_dict = torch.load(checkpoint, map_location=device)
+    config = LlamaConfig(**checkpoint_dict["model_args"])
+    model = Llama(config)
+    state_dict = checkpoint_dict["model"]
+    unwanted_prefix = "_orig_mod."
+    for k, v in list(state_dict.items()):
+        if k.startswith(unwanted_prefix):
+            state_dict[k[len(unwanted_prefix) :]] = state_dict.pop(k)
+    model.load_state_dict(state_dict, strict=False)
+    return model

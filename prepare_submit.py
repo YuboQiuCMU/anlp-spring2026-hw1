@@ -8,28 +8,40 @@ import zipfile
 import warnings
 
 REQUIRED_FILES = {
-    'run_llama.py',
-    'llama.py',
-    'optimizer.py',
-    'classifier.py',
-    'rope.py',
-    'generated-sentence-temp-0.txt',
-    'generated-sentence-temp-1.txt',
-    'sst-dev-prompting-output.txt',
-    'sst-test-prompting-output.txt',
-    'cfimdb-dev-prompting-output.txt',
-    'cfimdb-test-prompting-output.txt',
-    'addition_data_generation.py',
-    'addition_lib.py',
-    'addition_run.py',
+    "run_llama.py",
+    "llama.py",
+    "optimizer.py",
+    "classifier.py",
+    "rope.py",
+    "generated-sentence-temp-0.txt",
+    "generated-sentence-temp-1.txt",
+    "sst-dev-prompting-output.txt",
+    "sst-test-prompting-output.txt",
+    "cfimdb-dev-prompting-output.txt",
+    "cfimdb-test-prompting-output.txt",
+    "addition_data_generation.py",
+    "addition_lib.py",
+    "addition_run.py",
+    "base_llama.py",
+    "run_llama.py",
+    "feedback.txt",
+    "sanity_check.py",
+    "sanity_check.data",
+    "config.py",
+    "setup.sh",
+    "utils.py",
+    "README.md",
+    "structure.md",
+    "checklist.md",
+    "tokenizer.py",
 }
 
 REQUIRED_DIRS = {
-    'addition_models',
+    "addition_models",
 }
 
 OPTIONAL_FILES = {
-    'feedback.txt',
+    "feedback.txt",
 }
 
 REQUIRED_FILES = {os.path.normpath(f) for f in REQUIRED_FILES}
@@ -50,7 +62,7 @@ def check_file(file: str, check_aid: str):
     target_prefix = None
     inside_files = set()
 
-    with zipfile.ZipFile(file, 'r') as zz:
+    with zipfile.ZipFile(file, "r") as zz:
         print(f"Read zipfile {file}:")
         zz.printdir()
         print("#--")
@@ -63,10 +75,11 @@ def check_file(file: str, check_aid: str):
                 target_prefix, _ = info.filename.split("/", 1)
                 target_prefix = target_prefix + "/"
 
-            assert info.filename.startswith(target_prefix), \
-                "There should only be one top-level dir (with your andrew id as the dir-name) inside the zip file."
+            assert info.filename.startswith(
+                target_prefix
+            ), "There should only be one top-level dir (with your andrew id as the dir-name) inside the zip file."
 
-            ff = info.filename[len(target_prefix):].replace("\\", "/")
+            ff = info.filename[len(target_prefix) :].replace("\\", "/")
             inside_files.add(ff)
 
     # resolve files
@@ -80,12 +93,17 @@ def check_file(file: str, check_aid: str):
     combined_files = (missing_files | OPTIONAL_FILES) - inside_files
 
     assert len(missing_files) == 0, f"Some required files are missing: {missing_files}"
-    assert len(missing_dirs) == 0, f"Some required directories are missing: {missing_dirs}"
+    assert (
+        len(missing_dirs) == 0
+    ), f"Some required directories are missing: {missing_dirs}"
 
-    assert target_prefix[:-1] == check_aid, \
-        f"AndrewID mismatched: {target_prefix[:-1]} vs {check_aid}"
+    assert (
+        target_prefix[:-1] == check_aid
+    ), f"AndrewID mismatched: {target_prefix[:-1]} vs {check_aid}"
 
-    print(f"Read zipfile {file}, please check that your andrew-id is: {target_prefix[:-1]}")
+    print(
+        f"Read zipfile {file}, please check that your andrew-id is: {target_prefix[:-1]}"
+    )
     print(f"And it contains the following files: {sorted(list(inside_files))}")
 
     if len(combined_files) not in [0, 4]:
@@ -102,9 +120,9 @@ def main(path: str, aid: str):
     remaining_dirs = set(REQUIRED_DIRS)
 
     if os.path.isdir(path):
-        with zipfile.ZipFile(f"{aid}.zip", 'w') as zz:
+        with zipfile.ZipFile(f"{aid}.zip", "w") as zz:
             for root, dirs, files in os.walk(path):
-                if '.git' in root or '__pycache__' in root:
+                if ".git" in root or "__pycache__" in root:
                     continue
 
                 rel_root = os.path.normpath(os.path.relpath(root, path))
@@ -139,7 +157,9 @@ def main(path: str, aid: str):
                                 if rpath.startswith(d + os.sep):
                                     remaining_dirs.discard(d)
 
-        print(f"required files are {remaining_files} and required dirs are {remaining_dirs}")
+        print(
+            f"required files are {remaining_files} and required dirs are {remaining_dirs}"
+        )
 
         if remaining_files or remaining_dirs:
             print("Missing required files:", remaining_files)
@@ -147,11 +167,11 @@ def main(path: str, aid: str):
             breakpoint()
 
         print(f"Submission zip file created from DIR={path} for {aid}: {aid}.zip")
-        check_file(f'{aid}.zip', aid)
+        check_file(f"{aid}.zip", aid)
 
     else:
         check_file(path, aid)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main(*sys.argv[1:])
